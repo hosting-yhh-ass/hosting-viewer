@@ -1,0 +1,48 @@
+name: Rebuild viewer data from OneDrive
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes
+  workflow_dispatch: {}       # lets you also run it manually from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rebuild-data
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (pinned)
+        run: pip install --quiet -r requirements.txt
+
+      - name: Rebuild data.enc from OneDrive
+        env:
+          ONEDRIVE_URL: ${{ secrets.ONEDRIVE_URL }}
+          GATE_USER: ${{ secrets.GATE_USER }}
+          GATE_PASS: ${{ secrets.GATE_PASS }}
+        run: python3 build_data.py
+
+      - name: Commit data.enc if it changed
+        run: |
+          git config user.name  "fsii-bot"
+          git config user.email "fsii-bot@users.noreply.github.com"
+          if git status --porcelain data.enc .datahash | grep -q .; then
+            git add data.enc .datahash
+            git commit -m "Auto-refresh data.enc from OneDrive ($(date -u +%Y-%m-%dT%H:%MZ))"
+            git push
+            echo "Pushed updated data.enc"
+          else
+            echo "No change — nothing to commit"
+          fi

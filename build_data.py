@@ -1,6 +1,6 @@
 """
 FSII viewer data builder — runs inside GitHub Actions.
-
+ 
 What it does, unattended, on every run:
   1. Downloads the latest workbook from OneDrive (URL in the ONEDRIVE_URL secret),
      or reads a local file passed as argv[1] (for testing).
@@ -8,23 +8,24 @@ What it does, unattended, on every run:
      resizes each to a web thumbnail.
   3. Reads the item data from the 'yacht 2 new product' tab.
   4. Encrypts everything (AES-256-GCM, PBKDF2-HMAC-SHA256, 600k iters) into data.enc.
-
+ 
 Env vars (set as GitHub repo secrets):
   ONEDRIVE_URL  - a "view" (no-password) share link to the workbook  [required]
   GATE_USER     - viewer username  [required — never hardcoded here]
   GATE_PASS     - viewer password  [required — never hardcoded here]
-
+ 
 Usage:
   python3 build_data.py                 # CI mode: download from ONEDRIVE_URL
   python3 build_data.py path/to.xlsx    # local test mode
 """
-import sys, os, re, io, json, base64, zipfile, datetime, hashlib, urllib.request, urllib.parse
-
+import sys, os, re, io, json, base64, zipfile, datetime, hashlib
+import urllib.request, urllib.parse, http.cookiejar
+ 
 from PIL import Image
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
+ 
 ITER = 600000
 # No real credentials live in this file — the repo is public. They are supplied
 # only at runtime via the GATE_USER / GATE_PASS GitHub secrets. Missing = hard stop.
@@ -35,12 +36,12 @@ if not USER or not PASS:
                      '(GitHub secrets). Refusing to build without them.')
 THUMB_MAX = 900
 THUMB_Q = 82
-
+ 
 ITEM_TYPE_MAP = {'SCULPTURE': 'Sculpture', 'SCULTPURE': 'Sculpture', 'STATUE': 'Sculpture',
                  'OBJECTS': 'Objects', 'SHELLS': 'Shells', 'DISHES': 'Dishes',
                  'LIGHTING': 'Lighting', 'PICTURES': 'Pictures', 'ARTWORKS': 'Artworks'}
-
-
+ 
+ 
 def short_name(full):
     full = ' '.join(str(full).split())
     if len(full) <= 72:
@@ -52,8 +53,8 @@ def short_name(full):
     w = cut.rfind(' ')
     base = cut[:w] if w > 40 else cut
     return base.rstrip(' ,;:') + '…'
-
-
+ 
+ 
 def to_direct_download(url):
     """Turn a OneDrive / SharePoint share link into a direct-download URL."""
     if not url:
@@ -65,33 +66,55 @@ def to_direct_download(url):
         sep = '&' if '?' in url else '?'
         return url + sep + 'download=1'
     return url
-
-
+ 
+ 
+def _open_with_cookies(url):
+    """SharePoint anonymous downloads bounce through a redirect that sets a
+    guest-session cookie before serving the file. A plain urlopen drops that
+    cookie and gets handed the HTML viewer page instead of the bytes. A
+    cookie-aware opener that follows the whole redirect chain fixes it."""
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cj),
+        urllib.request.HTTPRedirectHandler())
+    opener.addheaders = [
+        ('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                       'AppleWebKit/537.36 (KHTML, like Gecko) '
+                       'Chrome/124.0 Safari/537.36'),
+        ('Accept', 'application/octet-stream,*/*')]
+    with opener.open(url, timeout=180) as r:
+        return r.read()
+ 
+ 
 def fetch_workbook(dest):
     url = os.environ.get('ONEDRIVE_URL')
     if not url:
         raise SystemExit('ONEDRIVE_URL not set')
     dl = to_direct_download(url)
-    req = urllib.request.Request(dl, headers={'User-Agent': 'Mozilla/5.0'})
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            data = r.read()
-    except Exception as e:
-        # Never surface the URL itself — Actions logs on a public repo are public.
-        raise SystemExit(f'Download failed ({type(e).__name__}). '
-                         'Check the ONEDRIVE_URL secret is a valid no-password '
-                         '"anyone with the link" view link.')
-    # sanity: must be a zip (xlsx). If we got HTML back, the link needs fixing.
-    # Do NOT print the response body — on a public repo the Actions log is public
-    # and the body could contain a token/redirect.
+    data = None
+    # Try the download=1 form first, then the raw link, with a cookie jar each.
+    for candidate in (dl, url):
+        try:
+            data = _open_with_cookies(candidate)
+        except Exception as e:
+            data = None
+            continue
+        if data[:2] == b'PK':
+            break  # got a real .xlsx (zip)
+    if data is None:
+        # Never surface the URL itself — public Actions logs.
+        raise SystemExit('Download failed (network/redirect error). Check the '
+                         'ONEDRIVE_URL secret is a valid no-password '
+                         '"anyone with the link" link.')
     if data[:2] != b'PK':
         raise SystemExit('Download did not return an .xlsx (got a non-zip response, '
-                         f'{len(data)} bytes). The share link is probably not a '
-                         'no-password "anyone with the link" direct download.')
+                         f'{len(data)} bytes) — SharePoint served a web page instead '
+                         'of the file. The link opens anonymously but is not serving '
+                         'the raw file to scripts.')
     open(dest, 'wb').write(data)
     return dest
-
-
+ 
+ 
 def extract_incell_images(xlsx_path):
     """Return {row_number: image_bytes} by walking the richData chain."""
     z = zipfile.ZipFile(xlsx_path)
@@ -104,7 +127,7 @@ def extract_incell_images(xlsx_path):
     tgt = ridtarget[sid['yacht 2 new product']]
     tgt = tgt[1:] if tgt.startswith('/') else 'xl/' + tgt
     sheet = z.read(tgt).decode()
-
+ 
     meta = z.read('xl/metadata.xml').decode()
     rvb = [int(m) for m in re.findall(r'<xlrd:rvb i="(\d+)"/>', meta)]
     rv = z.read('xl/richData/rdrichvalue.xml').decode()
@@ -116,7 +139,7 @@ def extract_incell_images(xlsx_path):
     relids = re.findall(r'<rel r:id="(rId\d+)"/>', rvrel)
     rrels = z.read('xl/richData/_rels/richValueRel.xml.rels').decode()
     rid2media = dict(re.findall(r'<Relationship Id="(rId\d+)"[^>]*Target="([^"]+)"', rrels))
-
+ 
     row_vm = {int(r): int(vm) for r, vm in re.findall(r'<c r="[A-Z]+(\d+)"[^>]*vm="(\d+)"', sheet)}
     out = {}
     for row, vm in sorted(row_vm.items()):
@@ -128,8 +151,8 @@ def extract_incell_images(xlsx_path):
         except (IndexError, KeyError):
             continue
     return out
-
-
+ 
+ 
 def make_thumb(raw):
     im = Image.open(io.BytesIO(raw))
     if im.mode not in ('RGB', 'L'):
@@ -138,8 +161,8 @@ def make_thumb(raw):
     buf = io.BytesIO()
     im.save(buf, 'JPEG', quality=THUMB_Q, optimize=True)
     return buf.getvalue()
-
-
+ 
+ 
 def read_items(xlsx_path, row_imgs):
     import openpyxl
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
@@ -157,7 +180,7 @@ def read_items(xlsx_path, row_imgs):
                 CM[H2K[h]] = c
     else:
         CM = dict(desc=5, type=16, dims=6, weight=7, present=2, count=4)
-
+ 
     items = []
     for r in range(2, 200):
         d = ss.cell(row=r, column=CM['desc']).value
@@ -186,15 +209,15 @@ def read_items(xlsx_path, row_imgs):
             loc=str(ss.cell(row=r, column=CM['present']).value or '') if 'present' in CM else '',
             img=img))
     return items
-
-
+ 
+ 
 def main():
     if len(sys.argv) > 1:
         xlsx = sys.argv[1]
     else:
         xlsx = 'workbook.xlsx'
         fetch_workbook(xlsx)
-
+ 
     # Change-detection: only rebuild data.enc when the workbook actually changed.
     # Otherwise the random salt/nonce would make data.enc differ every run and
     # bloat the repo with a new multi-MB commit every 30 minutes.
@@ -205,11 +228,11 @@ def main():
     if src_hash == prev and os.path.exists('data.enc'):
         print('No change in source workbook — skipping rebuild.')
         return
-
+ 
     row_imgs = extract_incell_images(xlsx)
     items = read_items(xlsx, row_imgs)
     stamp = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
-
+ 
     payload = json.dumps({'epoch': stamp, 'items': items}).encode()
     salt, nonce = os.urandom(16), os.urandom(12)
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=ITER)
@@ -220,7 +243,8 @@ def main():
     n_img = sum(1 for i in items if i['img'])
     print(f'OK: {len(items)} items, {n_img} photos, data.enc '
           f'{round(os.path.getsize("data.enc") / 1e6, 2)} MB')
-
-
+ 
+ 
 if __name__ == '__main__':
     main()
+ 

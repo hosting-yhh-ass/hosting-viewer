@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline' https://use.typekit.net https://p.typekit.net; font-src https://use.typekit.net https://p.typekit.net data:; script-src 'unsafe-inline'; connect-src 'self' https://use.typekit.net https://p.typekit.net; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline' https://use.typekit.net https://p.typekit.net; font-src https://use.typekit.net https://p.typekit.net data:; script-src 'self' 'sha256-5ecbTRkvlkA4AT/8n6vMc3GcEOKzpWG98i5gi55AmF8='; connect-src 'self' https://use.typekit.net https://p.typekit.net; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <link rel="stylesheet" href="https://use.typekit.net/wyr4xvw.css">
 <title>FSII Collection</title>
 <style>
@@ -17,9 +18,16 @@ header{border-bottom:1.5px solid var(--rule);padding-bottom:14px;}
 .hrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:14px 24px;}
 .brand{font-family:"acumin-pro",sans-serif;font-size:20px;font-weight:600;
 letter-spacing:.02em;white-space:nowrap;}
-.selectbtn{margin-left:auto;font-family:"acumin-pro",sans-serif;font-weight:400;
+.searchbar{margin-left:auto;font-family:"acumin-pro",sans-serif;font-size:15px;
+color:var(--ink);background:#fff;border:none;border-bottom:1px solid var(--rule);
+padding:7px 2px;min-width:180px;max-width:280px;outline:none;border-radius:0;
+letter-spacing:.02em;}
+.searchbar::placeholder{color:#a2a29c;}
+#stamprow{display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+flex-wrap:wrap;}
+.selectbtn{font-family:"acumin-pro",sans-serif;font-weight:400;
 font-size:14px;letter-spacing:.06em;color:var(--dim);cursor:pointer;
-background:none;border:none;}
+background:none;border:none;padding:12px 0 0;white-space:nowrap;}
 .selectbtn.on{color:var(--ink);}
 .filterlabel{font-family:"acumin-pro",sans-serif;font-weight:400;font-size:12px;
 letter-spacing:.14em;text-transform:uppercase;color:#a2a29c;align-self:center;margin-right:2px;}
@@ -128,7 +136,7 @@ font-size:16px;cursor:pointer;margin-top:14px;font-family:"acumin-pro",sans-seri
 <div id="gate"><div class="gbox">
 <input id="gu" type="text" placeholder="Login" autocapitalize="none" autocorrect="off">
 <input id="gp" type="password" placeholder="Password">
-<button onclick="tryLogin()">Enter</button>
+<button id="enterBtn">Enter</button>
 <div id="gerr"></div>
 </div></div>
 
@@ -136,30 +144,31 @@ font-size:16px;cursor:pointer;margin-top:14px;font-family:"acumin-pro",sans-seri
 <header>
 <div class="hrow">
 <div class="brand">FSII Collection</div>
-<button class="selectbtn" id="selectbtn" onclick="toggleSelectMode()">Select items</button>
+<input id="search" class="searchbar" type="search" placeholder="Search" autocapitalize="none" autocorrect="off">
 </div>
 </header>
 <div class="subrow" id="typeBar"></div>
 <div class="subrow" id="vitrineBar"></div>
 <div class="subrow" id="deckBar"></div>
-<div id="stamp"></div>
+<div id="stamprow"><div id="stamp"></div><button class="selectbtn" id="selectbtn">Select items</button></div>
 <main id="grid"></main>
 </div>
 
 <div id="selbar">
 <span class="n" id="selcount">0 selected</span>
-<button class="go" onclick="makeHotsheet()">Create hotsheet</button>
-<button class="clr" onclick="clearSel()">Clear</button>
+<button class="go" id="shareBtn">Share</button>
+<button class="clr" id="clearBtn">Cancel</button>
 </div>
 
 <div id="overlay">
-<button class="dclose" onclick="closeDetail()" aria-label="Close">&#215;</button>
+<button class="dclose" id="dcloseBtn" aria-label="Close">&#215;</button>
 <div class="sheet"><div class="dhead">FSII Collection</div><div id="dbody"></div></div>
 </div>
 </div>
 
 <div id="printroot"></div>
 
+<script src="jspdf.umd.min.js" integrity="sha256-5lUfzcMvCdaFOyxRJtGNAdlEfg2mGKQaEevu4PbCDVQ=" crossorigin="anonymous"></script>
 <script>
 var ITER = 600000;
 var KEY = null, ITEMS = [], STAMP_EPOCH = 0;
@@ -171,7 +180,7 @@ async function refresh(){var el=document.getElementById('refreshChip');if(el)el.
 
 
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-var typeFilter='All', vitrineFilter='All', deckFilter='All';
+var typeFilter='All', vitrineFilter='All', deckFilter='All', searchQuery='';
 var vitrineOpts=['All','In Vitrine','Open','Closed'];
 var deckOpts=['All','Deck 3','Deck 4','Deck 5','Deck 6','Deck 9','Deck 10','Deck 11'];
 var selMode=false, selected={};
@@ -190,6 +199,12 @@ function match(i){
   if(vitrineFilter==='Open' && i.vitrine!=='Open') return false;
   if(vitrineFilter==='Closed' && i.vitrine!=='Closed') return false;
   if(deckFilter!=='All' && String(i.deck)!==deckFilter.slice(5)) return false;
+  if(searchQuery){
+    var q=searchQuery.toLowerCase();
+    var hay=((i.name||'')+' '+(i.full||'')+' '+(i.rest||'')+' '+(i.type||'')+' '+
+             (i.dims||'')+' '+(i.deck||'')+' '+(i.vitrine||'')).toLowerCase();
+    if(hay.indexOf(q)<0) return false;
+  }
   return true;
 }
 function placeLine(i){
@@ -260,26 +275,70 @@ function updateSelbar(){
   document.getElementById('selbar').className=(selMode&&n>0)?'show':'';
 }
 
-/* hotsheet: one selected item per page -> print -> iPad Save to PDF / Share to Mail or WhatsApp */
-function makeHotsheet(){
+/* export: selected items -> one PDF -> iPad Share sheet (WhatsApp / Mail live there).
+   Text is DRAWN into the PDF by jsPDF, never parsed as HTML, so cell content
+   cannot execute. */
+function buildPdf(items){
+  var jsPDF=window.jspdf.jsPDF;
+  var doc=new jsPDF({unit:'pt',format:'a4'});
+  var W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), M=48;
+  items.forEach(function(i,idx){
+    if(idx>0) doc.addPage();
+    var y=M;
+    doc.setTextColor(17);
+    doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text('FSII COLLECTION', M, y); y+=8;
+    doc.setDrawColor(17); doc.setLineWidth(1); doc.line(M,y,W-M,y); y+=26;
+    doc.setFont('times','normal'); doc.setFontSize(20);
+    var nm=doc.splitTextToSize(String(i.name||''), W-2*M);
+    doc.text(nm, M, y); y+=nm.length*22+10;
+    if(i.img){
+      try{
+        var pr=doc.getImageProperties(i.img);
+        var r=Math.min((W-2*M)/pr.width, 300/pr.height);
+        var iw=pr.width*r, ih=pr.height*r;
+        doc.addImage(i.img,'JPEG', M, y, iw, ih); y+=ih+20;
+      }catch(e){}
+    }
+    doc.setFont('helvetica','normal'); doc.setFontSize(11);
+    function line(l,v){ if(v!==''&&v!=null){ doc.setFont('helvetica','bold');
+      doc.text(l+':', M, y); doc.setFont('helvetica','normal');
+      doc.text(doc.splitTextToSize(String(v), W-2*M-92), M+92, y); y+=17; } }
+    line('Type',i.type); line('Dimensions',i.dims);
+    line('Weight', i.weight?i.weight+' kg':'');
+    line('Count', i.count&&i.count>1?i.count+' pieces':'');
+    line('Deck', i.deck?'Deck '+i.deck:''); line('Vitrine', i.vitrine||'');
+    var desc=i.rest||i.full||'';
+    if(desc){ y+=10; doc.setFontSize(10.5);
+      doc.text(doc.splitTextToSize(String(desc), W-2*M), M, y); }
+  });
+  var blob=doc.output('blob');
+  return new File([blob], 'FSII-selection.pdf', {type:'application/pdf'});
+}
+function shareSelection(){
   var chosen=ITEMS.filter(function(i){return selected[i.acc];});
   if(!chosen.length) return;
-  var pages=chosen.map(function(i){
-    var rows='';
-    function r(l,v){ if(v!==''&&v!=null) rows+='<div class="hsrow"><b>'+esc(l)+'</b>'+esc(v)+'</div>'; }
-    r('Type',i.type); r('Dimensions',i.dims);
-    r('Weight', i.weight?i.weight+' kg':'');
-    r('Count', i.count&&i.count>1?i.count+' pieces':'');
-    r('Deck', i.deck?'Deck '+i.deck:''); r('Vitrine', i.vitrine||'');
-    var desc=(i.rest||i.full||'');
-    return '<div class="hspage"><div class="hshead">FSII COLLECTION</div>'+
-      '<div class="hsnm">'+esc(i.name)+'</div>'+
-      (i.img?'<img class="hsimg" src="'+esc(i.img)+'">':'')+
-      rows+(desc?'<div class="hsdesc">'+esc(desc)+'</div>':'')+'</div>';
-  }).join('');
-  document.getElementById('printroot').innerHTML=pages;
-  setTimeout(function(){ window.print(); }, 60);
+  var btn=document.getElementById('shareBtn'); var old=btn.textContent;
+  btn.textContent='Preparing…';
+  setTimeout(function(){
+    var file;
+    try{ file=buildPdf(chosen); }
+    catch(e){ btn.textContent=old; return; }
+    btn.textContent=old;
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      navigator.share({files:[file], title:'FSII selection'}).catch(function(){});
+    } else {
+      var url=URL.createObjectURL(file), a=document.createElement('a');
+      a.href=url; a.download=file.name; document.body.appendChild(a); a.click();
+      a.remove(); setTimeout(function(){URL.revokeObjectURL(url);},4000);
+    }
+  }, 30);
 }
+function cancelSel(){ selected={}; selMode=false;
+  document.body.classList.remove('selmode');
+  document.getElementById('selectbtn').textContent='Select items';
+  document.getElementById('selectbtn').classList.remove('on');
+  render(); updateSelbar(); }
 
 /* detail */
 function openDetail(i){
@@ -317,6 +376,13 @@ document.addEventListener('keydown',function(e){
   if(e.key==='Escape') closeDetail();
   if(e.key==='Enter' && document.getElementById('gate').style.display!=='none') tryLogin();
 });
+/* handlers wired in JS (no inline on* attributes) so CSP can forbid inline script */
+document.getElementById('enterBtn').onclick=tryLogin;
+document.getElementById('selectbtn').onclick=toggleSelectMode;
+document.getElementById('search').oninput=function(){searchQuery=this.value;render();};
+document.getElementById('shareBtn').onclick=shareSelection;
+document.getElementById('clearBtn').onclick=cancelSel;
+document.getElementById('dcloseBtn').onclick=closeDetail;
 </script>
 </body>
 </html>

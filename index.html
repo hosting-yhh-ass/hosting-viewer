@@ -130,12 +130,20 @@ font-size:16px;cursor:pointer;margin-top:14px;font-family:"acumin-pro",sans-seri
   .hsrow b{display:inline-block;width:34%;font-weight:600;}
   .hsdesc{margin-top:10pt;font-size:10.5pt;line-height:1.5;color:#111;}
 }
+
+/* --- style tweaks --- */
+.brand,.searchbar,.searchbar::placeholder,.selectbtn,.subrow a,#stamp,#stamp .refresh,#selbar,#selbar button,.gbox button,.filterlabel,.dfoot .lbl{text-transform:uppercase;}
+header{border-bottom:none;}
+.searchbar{border-bottom:none;}
+body{letter-spacing:.01em;}
+.cnm,.cmeta,.dnm,.ddesc,.spec td{letter-spacing:.012em;}
+.dnm{font-size:21px;}
 </style>
 </head>
 <body>
 <div id="gate"><div class="gbox">
 <input id="gu" type="text" placeholder="Login" autocapitalize="none" autocorrect="off">
-<input id="gp" type="password" placeholder="Password">
+<input id="gp" type="password" placeholder="Password" autocapitalize="none" autocorrect="off" autocomplete="current-password" spellcheck="false">
 <button id="enterBtn">Enter</button>
 <div id="gerr"></div>
 </div></div>
@@ -162,7 +170,7 @@ font-size:16px;cursor:pointer;margin-top:14px;font-family:"acumin-pro",sans-seri
 
 <div id="overlay">
 <button class="dclose" id="dcloseBtn" aria-label="Close">&#215;</button>
-<div class="sheet"><div class="dhead">FSII Collection</div><div id="dbody"></div></div>
+<div class="sheet"><div id="dbody"></div></div>
 </div>
 </div>
 

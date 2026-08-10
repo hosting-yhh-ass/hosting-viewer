@@ -120,14 +120,17 @@ function updateSelbar(){
 /* export: selected items -> one PDF -> iPad Share sheet (WhatsApp / Mail live there).
    Text is DRAWN into the PDF by jsPDF, never parsed as HTML, so cell content
    cannot execute. */
-function pdfName(){
+function pdfName(items){
   var d=new Date();
   var stamp=String(d.getFullYear()).slice(-2)+('0'+(d.getMonth()+1)).slice(-2)+('0'+d.getDate()).slice(-2);
   var parts=['FSII', stamp];
-  if(typeFilter && typeFilter!=='All') parts.push(typeFilter);
-  if(deckFilter && deckFilter!=='All') parts.push(deckFilter);
-  if(vitrineFilter && vitrineFilter!=='All') parts.push(vitrineFilter);
-  if(searchQuery && searchQuery.trim()) parts.push(searchQuery.trim().slice(0,24));
+  items=items||[];
+  function distinct(key){var out=[];items.forEach(function(i){var v=i[key];if(v&&out.indexOf(v)<0)out.push(v);});return out;}
+  var types=distinct('type');
+  if(types.length && types.length<=3) parts.push(types.join(' '));
+  else if(types.length>3) parts.push('Mixed');
+  var decks=distinct('deck'); if(decks.length===1) parts.push('Deck '+decks[0]);
+  var vits=distinct('vitrine'); if(vits.length===1) parts.push(vits[0]);
   var name=parts.join(' ').replace(/[\/\\:*?"<>| -]+/g,' ').replace(/\s+/g,' ').trim();
   return name.slice(0,120)+'.pdf';
 }
@@ -167,7 +170,7 @@ function buildPdf(items,imgs){
       doc.text(doc.splitTextToSize(String(desc), W-2*M), M, y); }
   });
   var blob=doc.output('blob');
-  return new File([blob], pdfName(), {type:'application/pdf'});
+  return new File([blob], pdfName(items), {type:'application/pdf'});
 }
 async function shareSelection(){
   var chosen=ITEMS.filter(function(i){return selected[i.acc];});

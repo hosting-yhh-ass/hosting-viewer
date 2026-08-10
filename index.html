@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline' https://use.typekit.net https://p.typekit.net; font-src https://use.typekit.net https://p.typekit.net data:; script-src 'self' 'sha256-t+0qFZUizThg8YBW2leXWCbXNPfudQnJz2uVf+hgEWY='; connect-src 'self' https://use.typekit.net https://p.typekit.net; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline' https://use.typekit.net https://p.typekit.net; font-src https://use.typekit.net https://p.typekit.net data:; script-src 'self' 'sha256-ynDujPbX8gzToQb57xjmf0wF2gpS8uf7fzp4pdl9JUc='; connect-src 'self' https://use.typekit.net https://p.typekit.net; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <link rel="stylesheet" href="https://use.typekit.net/wyr4xvw.css">
 <title>FSII Collection</title>
@@ -171,10 +171,10 @@ font-size:16px;cursor:pointer;margin-top:14px;font-family:"acumin-pro",sans-seri
 <script src="jspdf.umd.min.js" integrity="sha256-5lUfzcMvCdaFOyxRJtGNAdlEfg2mGKQaEevu4PbCDVQ=" crossorigin="anonymous"></script>
 <script>
 var ITER = 600000;
-var KEY = null, ITEMS = [], STAMP_EPOCH = 0, GU = '', GP = '';
+var KEY = null, ITEMS = [], STAMP_EPOCH = 0, GU = '', GP = '', CHECKED_EPOCH = 0;
 function b64buf(s){var bin=atob(s),a=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return a;}
 async function deriveKey(user,pass,salt){var base=await crypto.subtle.importKey('raw',new TextEncoder().encode(user+':'+pass),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations:ITER,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['decrypt']);}
-async function fetchAndDecrypt(){var res=await fetch('data.enc?ts='+Date.now(),{cache:'no-store'});if(!res.ok)throw new Error('fetch');var raw=b64buf((await res.text()).trim());var salt=raw.slice(0,16),nonce=raw.slice(16,28),ct=raw.slice(28);var key=await deriveKey(GU,GP,salt);var pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:nonce},key,ct);var obj=JSON.parse(new TextDecoder().decode(pt));ITEMS=obj.items;STAMP_EPOCH=obj.epoch;}
+async function fetchAndDecrypt(){var res=await fetch('data.enc?ts='+Date.now(),{cache:'no-store'});if(!res.ok)throw new Error('fetch');var raw=b64buf((await res.text()).trim());var salt=raw.slice(0,16),nonce=raw.slice(16,28),ct=raw.slice(28);var key=await deriveKey(GU,GP,salt);var pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:nonce},key,ct);var obj=JSON.parse(new TextDecoder().decode(pt));ITEMS=obj.items;STAMP_EPOCH=obj.epoch;CHECKED_EPOCH=Date.now();}
 async function tryLogin(){var u=document.getElementById('gu').value.trim().toLowerCase();var p=document.getElementById('gp').value;GU=u;GP=p;var btn=document.querySelector('.gbox button');btn.textContent='Unlocking...';try{await fetchAndDecrypt();document.getElementById('gate').style.display='none';document.getElementById('app').style.display='block';render();}catch(e){GU='';GP='';document.getElementById('gerr').textContent='Wrong username or password';document.getElementById('gp').value='';}btn.textContent='Enter';}
 async function refresh(){var el=document.getElementById('refreshChip');if(el)el.textContent='Refreshing...';try{await fetchAndDecrypt();}catch(e){}render();}
 
@@ -213,13 +213,19 @@ function placeLine(i){
   if(i.vitrine) p.push('Vitrine '+esc(String(i.vitrine).toLowerCase()));
   return p.length?p.join(', '):'Placement TBD';
 }
-function fmtStamp(){
-  try{return new Date(STAMP_EPOCH).toLocaleString([],{dateStyle:'medium',timeStyle:'short'});}
-  catch(e){return new Date(STAMP_EPOCH).toLocaleString();}
+function fmtStamp(ep){
+  try{return new Date(ep).toLocaleString([],{dateStyle:'medium',timeStyle:'short'});}
+  catch(e){return new Date(ep).toLocaleString();}
+}
+function checkedText(){
+  if(!CHECKED_EPOCH) return '—';
+  if(Date.now()-CHECKED_EPOCH < 60000) return 'just now';
+  try{return new Date(CHECKED_EPOCH).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
+  catch(e){return 'recently';}
 }
 function renderStamp(shown){
   var el=document.getElementById('stamp');
-  el.innerHTML = shown+' of '+ITEMS.length+' items · updated '+esc(fmtStamp())+
+  el.innerHTML = shown+' of '+ITEMS.length+' items · Last updated '+esc(fmtStamp(CHECKED_EPOCH))+
     ' · <span class="refresh" id="refreshTap">Tap to refresh</span>';
   var r=document.getElementById('refreshTap');
   r.onclick=function(){
